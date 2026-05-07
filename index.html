@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>German Article Finder</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+      color: #f1f5f9;
+    }
+    h1 { font-size: 2.2rem; margin-bottom: 8px; text-align: center; }
+    .subtitle { color: #94a3b8; margin-bottom: 32px; text-align: center; }
+    
+    .loading-bar {
+      color: #fbbf24;
+      font-weight: 600;
+      margin-bottom: 20px;
+      padding: 10px 20px;
+      background: rgba(251, 191, 36, 0.1);
+      border-radius: 8px;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    .search-box { display: flex; gap: 8px; width: 100%; max-width: 450px; }
+    input { flex: 1; padding: 16px 20px; font-size: 1.1rem; border: none; border-radius: 12px; outline: none; background: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    input:disabled { background: #e2e8f0; cursor: not-allowed; }
+    button { padding: 16px 24px; font-size: 1.1rem; font-weight: bold; border: none; border-radius: 12px; background: #6366f1; color: #fff; cursor: pointer; transition: background 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    button:hover { background: #4f46e5; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    .result { margin-top: 40px; padding: 40px; border-radius: 20px; text-align: center; display: none; width: 100%; max-width: 450px; box-shadow: 0 10px 15px rgba(0,0,0,0.2); transition: all 0.3s ease; }
+    .result.der { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
+    .result.die { background: linear-gradient(135deg, #db2777, #be185d); }
+    .result.das { background: linear-gradient(135deg, #16a34a, #15803d); }
+    .result.prediction { border: 2px dashed #cbd5e1; background: rgba(255,255,255,0.05); box-shadow: none; }
+    
+    .result .word { font-size: 3rem; font-weight: 800; letter-spacing: -1px; }
+    .result .meaning { font-size: 1.1rem; margin-top: 16px; opacity: 0.9; }
+    
+    /* English Meaning CSS Class */
+    .result .meaning-en { font-size: 1.1rem; margin-top: 6px; color: #fbbf24; font-weight: 500; font-style: italic; }
+    
+    .meta { margin-top: 24px; color: #e2e8f0; font-size: 1rem; line-height: 1.8; text-align: center; }
+    
+    .not-found { margin-top: 40px; color: #fca5a5; text-align: center; font-size: 1.1rem; padding: 20px; background: rgba(248, 113, 113, 0.1); border-radius: 12px; display: none;}
+
+    .legend { margin-top: auto; padding-top: 60px; display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    .legend span { padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; letter-spacing: 0.5px;}
+    .legend .der { background: #2563eb; }
+    .legend .die { background: #db2777; }
+    .legend .das { background: #16a34a; }
+  </style>
+</head>
+<body>
+
+  <h1>🇩🇪 German Article Finder</h1>
+  <p class="subtitle">Instant Results with Wiktionary & Live Translation</p>
+
+  <div id="loadingStatus" class="loading-bar">Loading massive database, please wait...</div>
+
+  <div class="search-box">
+    <input type="text" id="wordInput" placeholder="Enter a word..." autocomplete="off" disabled />
+    <button id="searchBtn" onclick="search()" disabled>Search</button>
+  </div>
+
+  <div class="result" id="result">
+    <div class="word" id="wordDisplay"></div>
+    <div class="meaning" id="meaningDisplay"></div>
+    <div class="meaning-en" id="meaningEnDisplay"></div>
+    <div class="meta" id="meta"></div>
+  </div>
+  
+  <div class="not-found" id="notFound"></div>
+
+  <div class="legend">
+    <span class="der">DER (Masculine)</span>
+    <span class="die">DIE (Feminine)</span>
+    <span class="das">DAS (Neuter)</span>
+  </div>
+
+  <script>
+    let dictionary = {};
+    const loadingStatus = document.getElementById('loadingStatus');
+    const input = document.getElementById('wordInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultDiv = document.getElementById('result');
+    const wordDisp = document.getElementById('wordDisplay');
+    const meanDisp = document.getElementById('meaningDisplay');
+    const meanEnDisp = document.getElementById('meaningEnDisplay'); 
+    const metaDisp = document.getElementById('meta');
+    const notFound = document.getElementById('notFound');
+
+    fetch('words.json')
+      .then(res => res.json())
+      .then(data => { 
+        dictionary = data; 
+        const wordCount = Object.keys(data).length;
+        loadingStatus.style.display = 'none';
+        input.disabled = false;
+        searchBtn.disabled = false;
+        input.placeholder = `Search within ${wordCount.toLocaleString('en-US')} words...`;
+        input.focus();
+      })
+      .catch(err => {
+        loadingStatus.innerHTML = "⚠️ words.json file not found!";
+      });
+
+    input.addEventListener('keyup', e => { if (e.key === 'Enter') search(); });
+
+    function predictArtikel(w) {
+      const word = w.toLowerCase();
+      if (word.endsWith('ung') || word.endsWith('heit') || word.endsWith('keit') || word.endsWith('schaft') || word.endsWith('ei') || word.endsWith('in') || word.endsWith('ion') || word.endsWith('tät') || word.endsWith('ik')) return 'die';
+      if (word.endsWith('ismus') || word.endsWith('er') || word.endsWith('ant') || word.endsWith('ent') || word.endsWith('ling') || word.endsWith('or')) return 'der';
+      if (word.endsWith('chen') || word.endsWith('lein') || word.endsWith('ment') || word.endsWith('um') || word.endsWith('ma')) return 'das';
+      return null;
+    }
+
+    function search() {
+      const raw = input.value.trim();
+      if (!raw) return;
+      
+      const key = raw.toLowerCase();
+
+      resultDiv.style.display = 'none';
+      resultDiv.className = 'result';
+      metaDisp.innerHTML = '';
+      meanEnDisp.textContent = ''; 
+      notFound.style.display = 'none';
+
+      const entry = dictionary[key];
+      const prediction = predictArtikel(key);
+
+      if (entry) {
+        showResult(entry.artikel, raw, entry.meaning, entry.plural, false);
+      } else if (prediction) {
+        showResult(prediction, raw, "", "Unknown", true);
+      } else {
+        notFound.textContent = `"${raw}" was not found in the database and could not be predicted.`;
+        notFound.style.display = 'block';
+      }
+    }
+
+    function showResult(artikel, raw, meaning, plural, isPredicted) {
+      resultDiv.classList.add(isPredicted ? 'prediction' : artikel);
+      resultDiv.style.display = 'block';
+      wordDisp.textContent = `${artikel} ${capitalize(raw)}`;
+      
+      // Display the original gloss (often already English if from EN Wiktionary)
+      meanDisp.textContent = meaning ? `🇩🇪 ${meaning}` : "";
+      
+      // Fetch English translation just in case the gloss is in German
+      if (meaning) {
+        meanEnDisp.textContent = "🇬🇧 Translating...";
+        
+        // Google Translate API Endpoint (Target Language changed to English: tl=en)
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&q=${encodeURIComponent(meaning)}`;
+        
+        fetch(url)
+          .then(res => res.json())
+          .then(data => {
+            const translatedText = data[0][0][0];
+            // If the original meaning and translated meaning are identical, we don't need to show it twice
+            if (meaning.toLowerCase().trim() === translatedText.toLowerCase().trim()) {
+                meanEnDisp.textContent = ""; 
+            } else {
+                meanEnDisp.textContent = `🇬🇧 ${translatedText}`;
+            }
+          })
+          .catch(err => {
+            console.error("Translation Error:", err);
+            meanEnDisp.textContent = "🇬🇧 (Translation failed)";
+          });
+      }
+      
+      let infoText = isPredicted 
+        ? "⚠️ Word not in database, predicted by suffix." 
+        : "✅ Wiktionary record found.";
+        
+      metaDisp.innerHTML = `
+        <div style="margin-bottom: 8px; font-size: 0.9rem; opacity: 0.8;">${infoText}</div>
+        <strong>Gender:</strong> ${genderName(artikel)} <br/>
+        <strong>Plural Form:</strong> ${plural || '-'}
+      `;
+    }
+
+    function capitalize(s) { 
+      return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); 
+    }
+    
+    function genderName(a) { 
+      return { der: 'Masculine', die: 'Feminine', das: 'Neuter' }[a]; 
+    }
+  </script>
+</body>
+</html>
