@@ -50,6 +50,18 @@
     
     .meta { margin-top: 24px; color: #e2e8f0; font-size: 1rem; line-height: 1.8; text-align: center; }
     
+    /* Case table (Nominativ / Akkusativ / Dativ) */
+    .cases { margin-top: 24px; width: 100%; border-collapse: collapse; font-size: 0.95rem; text-align: left; background: rgba(0,0,0,0.15); border-radius: 12px; overflow: hidden; }
+    .cases th, .cases td { padding: 8px 10px; }
+    .cases thead th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; font-weight: 600; }
+    .cases tbody th { font-weight: 600; opacity: 0.85; white-space: nowrap; }
+    .cases tbody tr { border-top: 1px solid rgba(255,255,255,0.12); }
+    .cases td { hyphens: auto; -webkit-hyphens: auto; overflow-wrap: anywhere; }
+    .result .word { hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word; }
+    .cases .art { font-weight: 700; color: #fde68a; }
+    .cases-note { margin-top: 8px; font-size: 0.8rem; opacity: 0.7; }
+    @media (max-width: 480px) { .result { padding: 28px 16px; } .result .word { font-size: 2.3rem; } .cases { font-size: 0.85rem; } .cases th, .cases td { padding: 6px; } .cases .indef { display: none; } .cases .art { display: block; } }
+
     .not-found { margin-top: 40px; color: #fca5a5; text-align: center; font-size: 1.1rem; padding: 20px; background: rgba(248, 113, 113, 0.1); border-radius: 12px; display: none;}
 
     .legend { margin-top: auto; padding-top: 60px; display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
@@ -72,10 +84,11 @@
   </div>
 
   <div class="result" id="result">
-    <div class="word" id="wordDisplay"></div>
+    <div class="word" id="wordDisplay" lang="de"></div>
     <div class="meaning" id="meaningDisplay"></div>
     <div class="meaning-en" id="meaningEnDisplay"></div>
     <div class="meta" id="meta"></div>
+    <div id="casesDisplay" lang="de"></div>
   </div>
   
   <div class="not-found" id="notFound"></div>
@@ -203,6 +216,70 @@
         <strong>Gender:</strong> ${genderName(artikel)} <br/>
         <strong>Plural Form:</strong> ${plural || '-'}
       `;
+
+      document.getElementById('casesDisplay').innerHTML = buildCaseTable(artikel, capitalize(raw), plural, isPredicted);
+    }
+
+    // ---- Case table: Nominativ / Akkusativ / Dativ ----
+    const ARTICLES = {
+      der: { nom: ['der', 'ein'],  akk: ['den', 'einen'], dat: ['dem', 'einem'] },
+      die: { nom: ['die', 'eine'], akk: ['die', 'eine'],  dat: ['der', 'einer'] },
+      das: { nom: ['das', 'ein'],  akk: ['das', 'ein'],   dat: ['dem', 'einem'] },
+    };
+    const PLURAL_ARTICLES = { nom: 'die', akk: 'die', dat: 'den' };
+
+    // Masculine nouns of the "n-Deklination" that the ending rules below don't catch (singular Akk/Dat form)
+    const N_DECL_SPECIAL = {
+      herr: 'Herrn', mensch: 'Menschen', bär: 'Bären', held: 'Helden', nachbar: 'Nachbarn',
+      bauer: 'Bauern', prinz: 'Prinzen', fürst: 'Fürsten', graf: 'Grafen', christ: 'Christen', narr: 'Narren',
+    };
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // Singular noun form in Akkusativ/Dativ. Usually unchanged, except masculine n-Deklination
+    // (der Junge -> den Jungen, der Student -> den Studenten). Detected only when the plural is known.
+    function singularOblique(artikel, noun, plural) {
+      const key = noun.toLowerCase();
+      if (artikel === 'das' && key === 'herz') return { akk: 'Herz', dat: 'Herzen' };
+      if (artikel !== 'der') return { akk: noun, dat: noun };
+      if (N_DECL_SPECIAL[key]) return { akk: N_DECL_SPECIAL[key], dat: N_DECL_SPECIAL[key] };
+      if (plural && plural !== '-') {
+        const p = plural.toLowerCase();
+        const isNDecl =
+          (key.endsWith('e') && p === key + 'n') ||
+          (/(ent|ant|ist|oge|at|graph|soph|nom)$/.test(key) && p === key + 'en');
+        if (isNDecl) return { akk: plural, dat: plural };
+      }
+      return { akk: noun, dat: noun };
+    }
+
+    // Dativ plural adds -n, unless the plural already ends in -n or -s (die Kinder -> den Kindern, die Autos -> den Autos)
+    function dativPlural(plural) {
+      return /[ns]$/i.test(plural) ? plural : plural + 'n';
+    }
+
+    function buildCaseTable(artikel, noun, plural, isPredicted) {
+      const a = ARTICLES[artikel];
+      if (!a) return '';
+      const hasPlural = plural && plural !== '-' && plural !== 'Unknown' && !/[,/]/.test(plural);
+      const sg = isPredicted ? { akk: noun, dat: noun } : singularOblique(artikel, noun, plural);
+      const forms = { nom: noun, akk: sg.akk, dat: sg.dat };
+      const cell = (art, word) => `<span class="art">${art}</span> ${escapeHtml(word)}`;
+      const rows = [['nom', 'Nominativ'], ['akk', 'Akkusativ'], ['dat', 'Dativ']].map(([c, label]) => `
+        <tr>
+          <th>${label}</th>
+          <td>${cell(a[c][0], forms[c])}</td>
+          <td class="indef">${cell(a[c][1], forms[c])}</td>
+          <td>${hasPlural ? cell(PLURAL_ARTICLES[c], c === 'dat' ? dativPlural(plural) : plural) : '–'}</td>
+        </tr>`).join('');
+      return `
+        <table class="cases">
+          <thead><tr><th></th><th>Bestimmt</th><th class="indef">Unbestimmt</th><th>Plural</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${isPredicted ? '<div class="cases-note">⚠️ Article was predicted — please double-check this table.</div>' : ''}`;
     }
 
     function capitalize(s) { 
