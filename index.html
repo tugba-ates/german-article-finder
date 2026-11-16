@@ -88,6 +88,7 @@
 
   <script>
     let dictionary = {};
+    let translationRequestId = 0;
     const loadingStatus = document.getElementById('loadingStatus');
     const input = document.getElementById('wordInput');
     const searchBtn = document.getElementById('searchBtn');
@@ -153,32 +154,45 @@
       resultDiv.style.display = 'block';
       wordDisp.textContent = `${artikel} ${capitalize(raw)}`;
       
-      // Display the original gloss (often already English if from EN Wiktionary)
-      meanDisp.textContent = meaning ? `🇩🇪 ${meaning}` : "";
-      
-      // Fetch English translation just in case the gloss is in German
-      if (meaning) {
-        meanEnDisp.textContent = "🇬🇧 Translating...";
-        
-        // Google Translate API Endpoint (Target Language changed to English: tl=en)
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&q=${encodeURIComponent(meaning)}`;
-        
-        fetch(url)
-          .then(res => res.json())
-          .then(data => {
-            const translatedText = data[0][0][0];
-            // If the original meaning and translated meaning are identical, we don't need to show it twice
-            if (meaning.toLowerCase().trim() === translatedText.toLowerCase().trim()) {
-                meanEnDisp.textContent = ""; 
-            } else {
-                meanEnDisp.textContent = `🇬🇧 ${translatedText}`;
-            }
-          })
-          .catch(err => {
-            console.error("Translation Error:", err);
-            meanEnDisp.textContent = "🇬🇧 (Translation failed)";
-          });
-      }
+      // The database only stores Wiktionary's FIRST sense, which is often a rare/archaic one
+      // (e.g. Anzug -> "das Heranziehen" instead of "suit"). Some entries are junk like "Plural „Bänder“:".
+      // So we translate the WORD ITSELF to get its common meanings, and show the gloss only as a secondary hint.
+      const cleanMeaning = (meaning && !/^plural\b/i.test(meaning.trim()) && !meaning.trim().endsWith(':')) ? meaning : "";
+      meanDisp.textContent = cleanMeaning ? `🇩🇪 ${cleanMeaning}` : "";
+
+      const requestId = ++translationRequestId;
+      meanEnDisp.textContent = "🇬🇧 Translating...";
+
+      // dt=t -> main translation, dt=bd -> dictionary alternatives (all common meanings)
+      const phrase = `${artikel} ${capitalize(raw)}`;
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&dt=bd&q=${encodeURIComponent(phrase)}`;
+
+      fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          if (requestId !== translationRequestId) return; // a newer search started meanwhile
+
+          const main = (data[0] || []).map(seg => seg[0]).join('').replace(/^the\s+/i, '').trim();
+
+          // Collect noun alternatives from the dictionary block (fall back to any part of speech)
+          let alternatives = [];
+          if (Array.isArray(data[1])) {
+            const nounBlock = data[1].find(b => b[0] === 'noun') || data[1][0];
+            if (nounBlock && Array.isArray(nounBlock[1])) alternatives = nounBlock[1];
+          }
+
+          const all = [main, ...alternatives]
+            .map(s => (s || '').trim())
+            .filter((s, i, arr) => s && arr.findIndex(x => x.toLowerCase() === s.toLowerCase()) === i)
+            .slice(0, 5);
+
+          meanEnDisp.textContent = all.length ? `🇬🇧 ${all.join(', ')}` : "";
+        })
+        .catch(err => {
+          if (requestId !== translationRequestId) return;
+          console.error("Translation Error:", err);
+          meanEnDisp.textContent = "🇬🇧 (Translation failed)";
+        });
       
       let infoText = isPredicted 
         ? "⚠️ Word not in database, predicted by suffix." 
